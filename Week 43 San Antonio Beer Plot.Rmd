@@ -1,0 +1,458 @@
+---
+title: "week 43 San Antonio Beer"
+author: "Alonso Cordova"
+date: "10/24/2020"
+output: html_document
+---
+
+
+
+
+
+
+
+
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+
+
+# Load Packages
+```{r packages}
+
+library(tidyverse)
+library(forcats)
+library(skimr)
+library(ggplot2)
+library(ggrepel)
+library(cowplot)
+library(scales)
+
+
+```
+
+
+
+
+
+# Skim data
+```{r skim data}
+
+
+beer_awards <- read_csv("beer_awards.csv") %>% 
+  mutate(medal = str_trim(medal)) # not necessary afterall
+
+skim_beer <- skim(beer_awards)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+## To Plot Pie 2: Data prep
+```{r pie2}
+
+
+# Narrow down to SA beer awards and count by medal
+cnt_sa_medal <- beer_awards %>% 
+  mutate(state = toupper(state)) %>%
+  filter(city == "San Antonio") %>% 
+  group_by(medal) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(tot = sum(n),
+         per = round(n/tot,2))
+
+
+
+
+
+# Get necessary values need for pie chart creation
+to_plot_pie2 <- cnt_sa_medal %>% 
+  select(medal,per) %>%
+  mutate(prop = per / sum(per) * 100) %>%
+  mutate(ypos = cumsum(prop)- 0.5*prop )
+
+# factor for plotting
+to_plot_pie2$medal <- factor(to_plot_pie2$medal) %>%  
+  fct_inorder() %>%
+  fct_rev()
+
+# Manually setting medal factor
+to_plot_pie2$medal <- factor(to_plot_pie2$medal, levels = c("Bronze","Silver","Gold"))
+
+
+# Preparing more values neceessary for pie graph creation
+to_plot_pie2 <-  to_plot_pie2 %>%
+  arrange(per) %>%
+  mutate(
+    end_angle = 2*pi*cumsum(per)/sum(per),   # ending angle for each pie slice
+    start_angle = lag(end_angle, default = 0),   # starting angle for each pie slice
+    mid_angle = 0.5*(start_angle + end_angle),   # middle of each pie slice, for the text label
+    # horizontal and vertical justifications depend on whether we're to the left/right
+    # or top/bottom of the pie
+    hjust = ifelse(mid_angle > pi, 1, 0),
+    vjust = ifelse(mid_angle < pi/2 | mid_angle > 3*pi/2, 0, 1)
+  )
+
+# radius of the pie and radius for outside and inside labels
+rpie <- 1
+rlabel_out <-  .0 * rpie #1.05 * rpie
+rlabel_in <- .0 * rpie  #0.6 * rpie   # can't  see because its black(?)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+## To Plot Pie 2: Medal % Plot 
+https://wilkelab.org/practicalgg/articles/bundestag_pie.html
+```{r pie plot}
+
+clr_medal <- c("#784212","#99A3A4","#F4D03F")
+
+label_pie <- c("XXX Medals were awarded")
+
+pie2 <- ggplot(to_plot_pie2, aes(x="", y=per, fill=medal)) +
+  geom_bar(stat="identity", width=.6, color="black") +
+  # Convert to pie (polar coordinates) and add labels
+  coord_polar("y", start=0) + 
+  scale_fill_manual(values = clr_medal) +
+  geom_text(data = to_plot_pie2, 
+            aes(label = paste0(medal,"\n ",round(per*100), "%")), # problem is that unless all labels are there then it wont position them properly
+            position = position_stack(vjust = 0.5),
+            color = "black",
+            size = 2) +
+      
+# good code for working with radius and circles
+  geom_text(color = "white",
+    aes(x = rlabel_out * sin(mid_angle),
+        y = rlabel_out * cos(mid_angle),
+        label = "",#medal,
+        hjust = hjust, vjust = vjust),
+        size = 14/.pt) + #, color = "red" # didnt seem to do anything
+      annotate('text',
+             x = 0.60,
+             y = 0,
+             vjust = 2.2,
+             label = '71 Medals \nWon',
+             colour = 'white',
+             fontface = 'bold',
+             size = 2.5) +
+  theme_classic() + 
+  theme(axis.line = element_blank(),
+        axis.text         =   element_blank(),
+        axis.ticks        =   element_blank(),
+        legend.position   =   "none",
+        plot.title        =   element_text(size = 5,hjust = 0,vjust = -10, color = "white"),
+        plot.background=element_rect(fill = 'black',color = 'black'),
+        panel.background = element_rect(fill = 'black',color = 'black')) 
+
+pie2
+
+
+
+#ggsave("pie2.png", pie2)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Top breweries data prep   
+```{r Top breweries}
+
+
+# Counts of medals by texas city
+# Can get counts and percentages from here
+cnt_sa_brewery <- beer_awards %>% 
+  mutate(state = toupper(state)) %>%
+  filter(city == "San Antonio") %>% 
+  group_by(brewery,medal) %>% 
+  count() %>% 
+  ungroup()# %>% 
+  #arrange(n)
+
+# gets us total medals won by brewery
+to_join_brew_sum <- beer_awards %>% 
+  mutate(state = toupper(state)) %>%
+  filter(city == "San Antonio") %>% 
+  group_by(brewery) %>% 
+  count() %>% 
+  ungroup() %>% 
+  rename(tot = n)
+
+# Join above info with main df
+cnt_sa_brewery <- left_join(cnt_sa_brewery,to_join_brew_sum, by = c("brewery" = "brewery"))
+
+# Going to use this to remove strings from brewery column
+to_remove <- c("Co.|(The)|Inc|Inc.|\\([^()]{0,}\\)")
+
+cnt_sa_brewery <- cnt_sa_brewery %>% 
+  mutate(brewery = str_trim(str_replace_all(brewery, to_remove,""))) %>% 
+  arrange(tot)  # put new value here
+
+
+# Brewery factor manipulation
+cnt_sa_brewery$brewery <- factor(cnt_sa_brewery$brewery) %>%  
+  fct_inorder()  %>%
+  fct_rev()
+
+
+# doing this so they appear in the right order in the stacked bar
+cnt_sa_brewery$medal <- factor(cnt_sa_brewery$medal, levels = c("Bronze","Silver","Gold"))
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Bar 1 plot
+```{r bar1}
+
+clr_medal <- c("#784212","#99A3A4","#F4D03F")
+
+
+
+
+
+
+
+
+bar1 <- ggplot(cnt_sa_brewery,aes(brewery,n, fill = medal)) +
+  geom_bar(stat = 'identity', color = 'black') +
+  labs(title = 'San Antonio Beer Awards',
+       subtitle = '#1 city in Texas for producing quality beer',
+       x = '',
+       y = "# of Medals Won by Brewery",
+       fill = '',
+       caption = "Data: Great American Beer Festival | @Alocord") +
+  scale_y_continuous(limits = c(0,43), expand = c(0,0)) + 
+  scale_fill_manual(values = clr_medal) +
+  coord_flip() +
+  theme (
+    plot.title        = element_text(size = 10, color = "white", vjust = -2), #, lineheight = 1
+    plot.subtitle = element_text(size = 8, color = "white", vjust = -1),
+    #   plot.subtitle     = element_text(face = 'bold', size = 12),
+    plot.caption      = element_text(size = 8, color = "white"),
+    # axis.line = element_blank(),
+  
+    ##
+    #panel.background  = element_blank(),
+    # panel.grid        = element_blank(),
+    plot.background=element_rect(fill = 'black',color = 'black'),
+    panel.background = element_rect(fill = 'black',color = 'black'),
+    panel.grid.major = element_blank(),
+    panel.grid.minor =element_blank(),
+    ##
+    # legend.position    = "none", # top right
+    legend.background = element_rect(fill = 'black'),
+    #legend.title = element_text(color = 'white'),
+    legend.text = element_text(color = 'white'),
+    legend.position = "none",   # c(0.92, 0.1),  # this positions is to lower right
+    ##
+    axis.title.x      = element_text(face = 'bold', size = 8, color = "white"),#element_text(face = 'bold', size = 10),
+    # axis.text.x       = element_text(angle = 90),
+    ##
+    axis.title.y      = element_text(face = 'bold', size = 10, color = "white"),
+    axis.text.y       = element_text(face = 'bold', size = 10, color = "white"),
+    axis.line.y = element_line(),
+    ##
+    axis.ticks        = element_blank(),
+    plot.margin       = unit(c(.05, .05, .05, .05), "in"))
+
+
+
+bar1
+
+
+
+# Getting somewhere with the overlay. 
+# 
+# plots <- bar1 + draw_plot(pie1,1,5,12,35)  # (y,x,size,size)
+# 
+# plots
+# 
+# ggsave("plots.png", plots)
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Year Plot data prep
+```{r year data prep}
+
+# Count of medals by year and state
+cnt_state_year <- beer_awards %>% 
+  #mutate(state = toupper(state)) %>% 
+  group_by(state,year) %>% 
+  count() %>% 
+  ungroup() 
+
+# Count of medals for SA by year
+cnt_sa_year <- beer_awards %>% 
+  mutate(state = toupper(state)) %>%
+  filter(city == "San Antonio") %>% 
+  group_by(year) %>% 
+  count() %>% 
+  ungroup() 
+
+
+# Count of medals for SA by year and medal type
+cnt_sa_year_medal <- beer_awards %>% 
+  mutate(state = toupper(state)) %>%
+  filter(city == "San Antonio") %>% 
+  group_by(year,medal) %>% 
+  count() %>% 
+  ungroup() 
+
+
+
+```
+
+
+
+
+
+
+## Year plot
+```{r year plot}
+
+plt_year <-# ggplot(cnt_sa_year, aes(year,n)) +
+  ggplot(cnt_sa_year_medal, aes(year,n, fill = medal)) +
+  geom_bar(stat = 'identity', color = 'black')+
+  scale_y_continuous(limits = c(0,11), expand = c(0,0), breaks = c(0,2,4,6,8,10)) +  #  
+  scale_fill_manual(values = clr_medal) +
+  labs(title = "Medals Won: 1987-2020") +
+theme (
+  plot.title        = element_text(size = 8, color = "white"),
+  plot.subtitle = element_text(size = 8, color = "white"),
+  #   plot.subtitle     = element_text(face = 'bold', size = 12),
+  plot.caption      = element_text(size = 8),
+  # axis.line = element_blank(),
+  ##
+  #panel.background  = element_blank(),
+  # panel.grid        = element_blank(),
+  plot.background=element_rect(fill = 'black',color = 'black'),
+  panel.background = element_rect(fill = 'black',color = 'black'),
+  panel.grid.major = element_blank(),
+  panel.grid.minor =element_blank(),
+  panel.grid.major.y  = element_line(size = 0.05, linetype = 'solid',
+                                  colour = "white"),
+  ##
+  # legend.position    = "none", # top right
+  legend.background = element_rect(fill = 'black'),
+  #legend.title = element_text(color = 'white'),
+  legend.text = element_text(color = 'white'),
+  legend.position = "none",
+  ##
+  axis.title.x      = element_text(face = 'bold', size = 10),
+  # axis.text.x       = element_text(angle = 90),
+  
+  ##
+  axis.title.y      = element_blank(),
+  axis.text.y       = element_text(face = 'bold', size = 10, color = "white"),
+  axis.line.y = element_line(color = "white"),
+
+  axis.text.x       = element_text(face = 'bold', size = 10, color = "white"),
+  axis.line.x       = element_line(color = "white"),
+
+  ##
+  axis.ticks        = element_blank(),
+  plot.margin       = unit(c(.05, .05, .05, .05), "in"))
+
+
+plt_year
+
+plots2 <- bar1 + draw_plot(plt_year,1.5,15,6,20)  # (y,x,size,size)
+
+plots2
+
+ggsave("plots2.png", plots2)
+
+
+```
+
+
+
+
+
+## Insetting plots
+```{r inset plots}
+
+# Combining 3 plots 
+plots3 <- plots2 + draw_plot(pie2,7.5,12,7,21)  # (y,x,size,size)  # (pie2,8.5,16,6,20)
+
+plots3
+
+
+ggsave("week 43 Beer.png", plots3, width = 8, height = 6)
+
+
+```
+
+
+
+
+
